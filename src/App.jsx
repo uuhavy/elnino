@@ -8,8 +8,9 @@ const ROW_GAP = 31;
 const COL_GAP = 38;
 const START_X = 50;
 const START_Y = 58;
-const ROWS = 8;
 const COLS = 10;
+
+const DANGER_LINE_Y = HEIGHT - 158;
 
 const SHOOTER_X = WIDTH / 2;
 const SHOOTER_Y = HEIGHT - 72;
@@ -32,32 +33,63 @@ function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function createBoard() {
+function createBubble(row, col, color = randomColor()) {
+  const offset = row % 2 === 1 ? COL_GAP / 2 : 0;
+
+  return {
+    id: `${row}-${col}-${Date.now()}-${Math.random()}`,
+    row,
+    col,
+    x: START_X + col * COL_GAP + offset,
+    y: START_Y + row * ROW_GAP,
+    color,
+  };
+}
+
+function createTopRow() {
+  const row = 0;
+  const bubbles = [];
+
+  for (let col = 0; col < COLS; col++) {
+    bubbles.push(createBubble(row, col));
+  }
+
+  return bubbles;
+}
+
+function createBoard(level = 1) {
   const board = [];
+  const rows = Math.min(6 + level, 9);
 
-  for (let row = 0; row < ROWS; row++) {
+  for (let row = 0; row < rows; row++) {
     for (let col = 0; col < COLS; col++) {
-      if (row > 5 && Math.random() > 0.55) continue;
-
-      const offset = row % 2 === 1 ? COL_GAP / 2 : 0;
-
-      board.push({
-        id: `${row}-${col}-${Math.random()}`,
-        row,
-        col,
-        x: START_X + col * COL_GAP + offset,
-        y: START_Y + row * ROW_GAP,
-        color: randomColor(),
-      });
+      if (row > 5 && Math.random() > 0.65) continue;
+      board.push(createBubble(row, col));
     }
   }
 
   return board;
 }
 
+function moveBoardDownAndAddRow(board) {
+  const moved = board.map((bubble) => {
+    const newRow = bubble.row + 1;
+    const offset = newRow % 2 === 1 ? COL_GAP / 2 : 0;
+
+    return {
+      ...bubble,
+      row: newRow,
+      x: START_X + bubble.col * COL_GAP + offset,
+      y: START_Y + newRow * ROW_GAP,
+    };
+  });
+
+  return [...createTopRow(), ...moved];
+}
+
 function getGridPosition(x, y) {
   let row = Math.round((y - START_Y) / ROW_GAP);
-  row = Math.max(0, Math.min(15, row));
+  row = Math.max(0, Math.min(18, row));
 
   const offset = row % 2 === 1 ? COL_GAP / 2 : 0;
 
@@ -160,6 +192,45 @@ function normalizeAngle(angle) {
   return angle;
 }
 
+function playTone(type) {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audio = new AudioContext();
+
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+
+    osc.connect(gain);
+    gain.connect(audio.destination);
+
+    if (type === 'shoot') {
+      osc.frequency.value = 520;
+      gain.gain.value = 0.05;
+      osc.type = 'sine';
+      osc.start();
+      osc.stop(audio.currentTime + 0.06);
+    }
+
+    if (type === 'pop') {
+      osc.frequency.value = 880;
+      gain.gain.value = 0.06;
+      osc.type = 'triangle';
+      osc.start();
+      osc.stop(audio.currentTime + 0.12);
+    }
+
+    if (type === 'lose') {
+      osc.frequency.value = 180;
+      gain.gain.value = 0.08;
+      osc.type = 'sawtooth';
+      osc.start();
+      osc.stop(audio.currentTime + 0.22);
+    }
+  } catch {
+    // ignore audio errors
+  }
+}
+
 export default function App() {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
@@ -167,9 +238,12 @@ export default function App() {
   const boardRef = useRef([]);
   const projectileRef = useRef(null);
   const angleRef = useRef(-Math.PI / 2);
+  const currentColorRef = useRef(randomColor());
   const nextColorRef = useRef(randomColor());
+  const particlesRef = useRef([]);
 
-  const [board, setBoard] = useState(() => createBoard());
+  const [level, setLevel] = useState(1);
+  const [board, setBoard] = useState(() => createBoard(1));
   const [projectile, setProjectile] = useState(null);
   const [angle, setAngle] = useState(-Math.PI / 2);
   const [score, setScore] = useState(0);
@@ -201,8 +275,14 @@ export default function App() {
     }
   }
 
+  function resetColors() {
+    currentColorRef.current = randomColor();
+    nextColorRef.current = randomColor();
+  }
+
   function startGame() {
-    const newBoard = createBoard();
+    const newLevel = 1;
+    const newBoard = createBoard(newLevel);
 
     boardRef.current = newBoard;
     setBoard(newBoard);
@@ -210,34 +290,88 @@ export default function App() {
     projectileRef.current = null;
     setProjectile(null);
 
-    nextColorRef.current = randomColor();
+    particlesRef.current = [];
+    resetColors();
 
+    setLevel(newLevel);
     setScore(0);
     setShots(0);
     setMessage('Aim with mouse, click to shoot.');
     setGameState('playing');
   }
 
+  function nextLevel(currentScore) {
+    const newLevel = level + 1;
+    const newBoard = createBoard(newLevel);
+
+    boardRef.current = newBoard;
+    setBoard(newBoard);
+
+    projectileRef.current = null;
+    setProjectile(null);
+
+    particlesRef.current = [];
+    resetColors();
+
+    setLevel(newLevel);
+    setMessage(`Level ${newLevel}. More bubbles, more points.`);
+    setGameState('playing');
+    updateBest(currentScore);
+  }
+
+  function createExplosion(bubbles) {
+    const particles = [];
+
+    for (const bubble of bubbles) {
+      for (let i = 0; i < 8; i++) {
+        const angleValue = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 3;
+
+        particles.push({
+          x: bubble.x,
+          y: bubble.y,
+          vx: Math.cos(angleValue) * speed,
+          vy: Math.sin(angleValue) * speed,
+          life: 28,
+          color: bubble.color,
+          size: 2 + Math.random() * 3,
+        });
+      }
+    }
+
+    particlesRef.current = [...particlesRef.current, ...particles];
+  }
+
   function shoot() {
     if (gameState !== 'playing') return;
     if (projectileRef.current) return;
 
-    const speed = 8;
+    playTone('shoot');
+
+    const speed = 8.5;
 
     const p = {
       x: SHOOTER_X,
       y: SHOOTER_Y,
       vx: Math.cos(angleRef.current) * speed,
       vy: Math.sin(angleRef.current) * speed,
-      color: nextColorRef.current,
+      color: currentColorRef.current,
     };
 
     projectileRef.current = p;
     setProjectile(p);
 
+    currentColorRef.current = nextColorRef.current;
     nextColorRef.current = randomColor();
 
     setShots((v) => v + 1);
+  }
+
+  function loseGame(finalScore) {
+    playTone('lose');
+    updateBest(finalScore);
+    setGameState('gameover');
+    setMessage('Game over. The bubbles touched the red line.');
   }
 
   function attachProjectile(p) {
@@ -262,6 +396,8 @@ export default function App() {
     let gained = 0;
 
     if (cluster.length >= 3) {
+      playTone('pop');
+
       const removeIds = new Set(cluster.map((b) => b.id));
       newBoard = newBoard.filter((b) => !removeIds.has(b.id));
 
@@ -270,7 +406,9 @@ export default function App() {
 
       newBoard = newBoard.filter((b) => !floatingIds.has(b.id));
 
-      gained = cluster.length * 10 + floating.length * 20;
+      createExplosion([...cluster, ...floating]);
+
+      gained = cluster.length * 10 + floating.length * 20 + level * 5;
 
       setScore((oldScore) => {
         const newScore = oldScore + gained;
@@ -280,8 +418,10 @@ export default function App() {
 
       setMessage(`Nice shot! +${gained} points`);
     } else {
-      setMessage('No match. Try another angle.');
+      setMessage('No match. Board moved down.');
     }
+
+    newBoard = moveBoardDownAndAddRow(newBoard);
 
     boardRef.current = newBoard;
     setBoard(newBoard);
@@ -289,16 +429,18 @@ export default function App() {
     projectileRef.current = null;
     setProjectile(null);
 
-    if (newBoard.some((b) => b.y > HEIGHT - 180)) {
-      updateBest(score + gained);
-      setGameState('gameover');
-      setMessage('Game over. The bubbles reached your zone.');
+    const finalScore = score + gained;
+
+    if (newBoard.some((b) => b.y + R >= DANGER_LINE_Y)) {
+      loseGame(finalScore);
+      return;
     }
 
     if (newBoard.length === 0) {
-      updateBest(score + gained);
-      setGameState('win');
-      setMessage('Perfect clear.');
+      const levelScore = finalScore + 100 * level;
+      setScore(levelScore);
+      updateBest(levelScore);
+      setTimeout(() => nextLevel(levelScore), 800);
     }
   }
 
@@ -351,7 +493,7 @@ export default function App() {
       canvas.removeEventListener('touchmove', touchMove);
       canvas.removeEventListener('touchend', touchEnd);
     };
-  }, [gameState, score]);
+  }, [gameState, score, level]);
 
   useEffect(() => {
     function loop() {
@@ -381,6 +523,7 @@ export default function App() {
         }
       }
 
+      updateParticles();
       draw();
       animationRef.current = requestAnimationFrame(loop);
     }
@@ -390,7 +533,19 @@ export default function App() {
     return () => {
       cancelAnimationFrame(animationRef.current);
     };
-  }, [gameState, score]);
+  }, [gameState, score, level]);
+
+  function updateParticles() {
+    particlesRef.current = particlesRef.current
+      .map((p) => ({
+        ...p,
+        x: p.x + p.vx,
+        y: p.y + p.vy,
+        vy: p.vy + 0.05,
+        life: p.life - 1,
+      }))
+      .filter((p) => p.life > 0);
+  }
 
   function drawBubble(ctx, bubble, glow = false) {
     ctx.save();
@@ -431,6 +586,18 @@ export default function App() {
     ctx.restore();
   }
 
+  function drawParticles(ctx) {
+    for (const p of particlesRef.current) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.life / 28);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
   function drawBackground(ctx) {
     const bg = ctx.createLinearGradient(0, 0, 0, HEIGHT);
 
@@ -452,10 +619,15 @@ export default function App() {
     }
 
     ctx.fillStyle = 'rgba(239,68,68,0.16)';
-    ctx.fillRect(0, HEIGHT - 156, WIDTH, 156);
+    ctx.fillRect(0, DANGER_LINE_Y, WIDTH, HEIGHT - DANGER_LINE_Y);
 
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(0, HEIGHT - 158, WIDTH, 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillRect(0, DANGER_LINE_Y, WIDTH, 2);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = 'bold 11px Arial';
+    ctx.textAlign = 'right';
+    ctx.fillText('DANGER LINE', WIDTH - 16, DANGER_LINE_Y - 8);
   }
 
   function drawAimLine(ctx) {
@@ -500,7 +672,7 @@ export default function App() {
       {
         x: SHOOTER_X,
         y: SHOOTER_Y,
-        color: nextColorRef.current,
+        color: currentColorRef.current,
       },
       true
     );
@@ -523,6 +695,19 @@ export default function App() {
     );
   }
 
+  function drawHud(ctx) {
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 18px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Score: ${score}`, 20, 32);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.font = 'bold 13px Arial';
+    ctx.fillText(`Best: ${bestScore}`, 20, 54);
+    ctx.fillText(`Shots: ${shots}`, 20, 74);
+    ctx.fillText(`Level: ${level}`, 20, 94);
+  }
+
   function draw() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -537,6 +722,7 @@ export default function App() {
       drawBubble(ctx, bubble);
     }
 
+    drawParticles(ctx);
     drawAimLine(ctx);
 
     if (projectileRef.current) {
@@ -545,16 +731,7 @@ export default function App() {
 
     drawShooter(ctx);
     drawNextBubble(ctx);
-
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 18px Arial';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Score: ${score}`, 20, 32);
-
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.font = 'bold 13px Arial';
-    ctx.fillText(`Best: ${bestScore}`, 20, 54);
-    ctx.fillText(`Shots: ${shots}`, 20, 74);
+    drawHud(ctx);
   }
 
   return (
@@ -587,8 +764,8 @@ export default function App() {
                 <div>
                   <h2>Ready to Hunt?</h2>
                   <p>
-                    Move your mouse to aim. Click to shoot. Match 3 bubbles to
-                    clear them.
+                    Move your mouse to aim. Click to shoot. Every shot drops the
+                    board by one row. Do not touch the red line.
                   </p>
                   <button onClick={startGame}>Start Game</button>
                 </div>
@@ -598,14 +775,6 @@ export default function App() {
                 <div>
                   <h2>Game Over</h2>
                   <p>Your final score is {score}</p>
-                  <button onClick={startGame}>Play Again</button>
-                </div>
-              )}
-
-              {gameState === 'win' && (
-                <div>
-                  <h2>Perfect Clear</h2>
-                  <p>You cleared the full board. Final score: {score}</p>
                   <button onClick={startGame}>Play Again</button>
                 </div>
               )}
