@@ -2,35 +2,21 @@ import React from 'react';
 
 export default function GameOverScreen({
   score,
-  coins,
-  combo,
   feeStatus,
   txHash,
   onRestart,
 }) {
   return (
     <div id='game-over-screen' style={{ display: 'flex' }}>
-      <div className='go-skull'>💀</div>
-      <div className='go-title'>WASTED</div>
+      <div className='go-skull'>🐍</div>
+      <div className='go-title'>GAME OVER</div>
       <div className='go-divider'></div>
 
       <div className='go-stats'>
         <div className='go-stat'>
-          <div className='go-stat-label'>SCORE</div>
+          <div className='go-stat-label'>LENGTH</div>
           <div className='go-stat-val' id='final-score'>
             {score}
-          </div>
-        </div>
-        <div className='go-stat'>
-          <div className='go-stat-label'>COINS</div>
-          <div className='go-stat-val coins' id='final-coins'>
-            {coins}
-          </div>
-        </div>
-        <div className='go-stat'>
-          <div className='go-stat-label'>COMBO</div>
-          <div className='go-stat-val combo' id='final-combo'>
-            x{combo}
           </div>
         </div>
       </div>

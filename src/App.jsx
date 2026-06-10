@@ -1,11 +1,8 @@
 import React from 'react';
 import { useGameEngine } from './hooks/useGameEngine';
 import { useWallet } from './hooks/useWallet';
-import HUD from './components/HUD';
 import LoadingScreen from './components/LoadingScreen';
 import GameOverScreen from './components/GameOverScreen';
-import PauseOverlay from './components/PauseOverlay';
-import HudControls from './components/HudControls';
 
 export default function App() {
   const {
@@ -34,8 +31,11 @@ export default function App() {
 
   return (
     <>
-      <div id='game-container' ref={game.containerRef}></div>
-      <div id='screen-flash'></div>
+      <div id='game-container' style={{ display: game.gameState === 'playing' ? 'block' : 'none', position: 'absolute', top: 0, left: 0, width: '100vw', height: '100vh', overflow: 'hidden' }}>
+        <canvas className="cnv" id="canvasHex" style={{position: 'absolute', top: 0, left: 0, zIndex: 1}}></canvas>
+        <canvas className="cnv" id="canvasFood" style={{position: 'absolute', top: 0, left: 0, zIndex: 2}}></canvas>
+        <canvas className="cnv" id="canvasSnake" style={{position: 'absolute', top: 0, left: 0, zIndex: 3}}></canvas>
+      </div>
 
       {(game.gameState === 'loading' || game.gameState === 'ready') && (
         <LoadingScreen
@@ -49,42 +49,14 @@ export default function App() {
         />
       )}
 
-      {(game.gameState === 'playing' ||
-        game.gameState === 'paused' ||
-        game.gameState === 'gameover') && (
-        <HUD
-          score={game.score}
-          coins={game.coins}
-          combo={game.combo}
-          distance={game.distance}
-        />
-      )}
-
-      {(game.gameState === 'playing' || game.gameState === 'paused') && (
-        <HudControls
-          isMuted={game.isMuted}
-          onToggleMute={game.toggleMute}
-          onVolumeChange={game.setVolume}
-          wallet={wallet}
-        />
-      )}
-
-      {game.gameState === 'paused' && <PauseOverlay />}
-
       {game.gameState === 'gameover' && (
         <GameOverScreen
           score={game.finalScore}
-          coins={game.finalCoins}
-          combo={game.finalCombo}
           feeStatus={feeStatus}
           txHash={txHash}
           onRestart={handleRestartClick}
         />
       )}
-
-      <div id='toast' className={game.toastMsg ? 'show' : ''}>
-        {game.toastMsg}
-      </div>
     </>
   );
 }

@@ -1,0 +1,46 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_20-69e625af2c2198ef06f5cd829320743cc1a20136",
+  "solcVersion": "0.8.20",
+  "solcLongVersion": "0.8.20+commit.a1b79de6",
+  "compilerType": "solc",
+  "userSourceNameMap": {
+    "contracts/SnakeFees.sol": "project/contracts/SnakeFees.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "shanghai",
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode.linkReferences",
+            "evm.bytecode.object",
+            "evm.bytecode.opcodes",
+            "evm.bytecode.sourceMap",
+            "evm.deployedBytecode.immutableReferences",
+            "evm.deployedBytecode.linkReferences",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.opcodes",
+            "evm.deployedBytecode.sourceMap",
+            "evm.methodIdentifiers"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/SnakeFees.sol": {
+        "content": "// SPDX-License-Identifier: MIT\r\npragma solidity ^0.8.20;\r\n\r\n/**\r\n * @title SnakeFees\r\n * @notice Fee collector for Base Snake game on Base Mainnet\r\n *         - payGameStart(): player pays before each game session\r\n *         - payGameEnd():   player pays when session ends\r\n *         - setFees():      owner adjusts fee amounts\r\n *         - withdraw():     owner withdraws accumulated ETH\r\n */\r\ncontract SnakeFees {\r\n\r\n    address public owner;\r\n    uint256 public gameStartFee = 0.0000003 ether; // ~$0.001\r\n    uint256 public gameEndFee   = 0.0000003 ether; // ~$0.001\r\n\r\n    uint256 public totalStartPaid;\r\n    uint256 public totalEndPaid;\r\n    uint256 public totalPlayers;\r\n\r\n    mapping(address => bool) private _seen;\r\n\r\n    event GameStartPaid(address indexed player, uint256 amount);\r\n    event GameEndPaid(address indexed player, uint256 amount);\r\n    event FeesUpdated(uint256 newStartFee, uint256 newEndFee);\r\n    event Withdrawn(address indexed to, uint256 amount);\r\n\r\n    modifier onlyOwner() {\r\n        require(msg.sender == owner, \"Not owner\");\r\n        _;\r\n    }\r\n\r\n    constructor() {\r\n        owner = msg.sender;\r\n    }\r\n\r\n    // ─── Player Functions ────────────────────────────────────────\r\n\r\n    /// @notice Pay the game-start fee. Must send at least gameStartFee.\r\n    function payGameStart() external payable {\r\n        require(msg.value >= gameStartFee, \"Insufficient start fee\");\r\n\r\n        if (!_seen[msg.sender]) {\r\n            _seen[msg.sender] = true;\r\n            totalPlayers++;\r\n        }\r\n\r\n        totalStartPaid += msg.value;\r\n        emit GameStartPaid(msg.sender, msg.value);\r\n    }\r\n\r\n    /// @notice Pay the game-end fee. Must send at least gameEndFee.\r\n    function payGameEnd() external payable {\r\n        require(msg.value >= gameEndFee, \"Insufficient end fee\");\r\n        totalEndPaid += msg.value;\r\n        emit GameEndPaid(msg.sender, msg.value);\r\n    }\r\n\r\n    // ─── Owner Functions ─────────────────────────────────────────\r\n\r\n    /// @notice Update fee amounts.\r\n    function setFees(uint256 _startFee, uint256 _endFee) external onlyOwner {\r\n        gameStartFee = _startFee;\r\n        gameEndFee   = _endFee;\r\n        emit FeesUpdated(_startFee, _endFee);\r\n    }\r\n\r\n    /// @notice Withdraw all ETH in this contract to the owner.\r\n    function withdraw() external onlyOwner {\r\n        uint256 bal = address(this).balance;\r\n        require(bal > 0, \"Nothing to withdraw\");\r\n        payable(owner).transfer(bal);\r\n        emit Withdrawn(owner, bal);\r\n    }\r\n\r\n    /// @notice Transfer ownership to a new address.\r\n    function transferOwnership(address newOwner) external onlyOwner {\r\n        require(newOwner != address(0), \"Zero address\");\r\n        owner = newOwner;\r\n    }\r\n\r\n    // ─── View ────────────────────────────────────────────────────\r\n\r\n    function contractBalance() external view returns (uint256) {\r\n        return address(this).balance;\r\n    }\r\n}\r\n"
+      }
+    }
+  }
+}

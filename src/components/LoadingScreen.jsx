@@ -17,7 +17,7 @@ export default function LoadingScreen({
     <div id='loading-screen'>
       <div className='load-logo-wrap'>
         <div className='load-logo'>
-          SUBWAY <span>SURFERS</span>
+          SLITHER <span>WEB3</span>
         </div>
       </div>
 

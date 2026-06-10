@@ -1,4 +1,4 @@
-import '@nomicfoundation/hardhat-toolbox';
+
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -14,11 +14,13 @@ export default {
   networks: {
     base: {
       url: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+      type: 'http',
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 8453,
     },
     'base-sepolia': {
       url: 'https://sepolia.base.org',
+      type: 'http',
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 84531,
     },
