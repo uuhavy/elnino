@@ -3,12 +3,12 @@ import { useEffect, useRef, useState } from 'react';
 const WIDTH = 480;
 const HEIGHT = 720;
 
-const R = 18;
-const ROW_GAP = 31;
-const COL_GAP = 38;
-const START_X = 50;
-const START_Y = 58;
-const COLS = 10;
+const R = 15;
+const ROW_GAP = 26;
+const COL_GAP = 32;
+const START_X = 44;
+const START_Y = 56;
+const COLS = 12;
 
 const DANGER_LINE_Y = HEIGHT - 158;
 
@@ -33,7 +33,7 @@ function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function createBubble(row, col, color = randomColor()) {
+function createBubble(row, col, color = randomColor(), dropOffset = 0) {
   const offset = row % 2 === 1 ? COL_GAP / 2 : 0;
 
   return {
@@ -41,54 +41,71 @@ function createBubble(row, col, color = randomColor()) {
     row,
     col,
     x: START_X + col * COL_GAP + offset,
-    y: START_Y + row * ROW_GAP,
+    y: START_Y + row * ROW_GAP + dropOffset,
     color,
   };
 }
 
-function createTopRow() {
-  const row = 0;
+function createTopRow(dropOffset = 0) {
   const bubbles = [];
 
   for (let col = 0; col < COLS; col++) {
-    bubbles.push(createBubble(row, col));
+    bubbles.push(createBubble(0, col, randomColor(), dropOffset));
   }
 
   return bubbles;
 }
 
-function createBoard(level = 1) {
+function createBoard(level = 1, dropOffset = 0) {
   const board = [];
   const rows = Math.min(6 + level, 9);
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < COLS; col++) {
       if (row > 5 && Math.random() > 0.65) continue;
-      board.push(createBubble(row, col));
+      board.push(createBubble(row, col, randomColor(), dropOffset));
     }
   }
 
   return board;
 }
 
-function moveBoardDownAndAddRow(board) {
+function advanceBoard(board, currentDropOffset) {
+  let nextDropOffset = currentDropOffset + ROW_GAP / 2;
+  let shouldAddNewRow = false;
+
+  if (nextDropOffset >= ROW_GAP) {
+    nextDropOffset = 0;
+    shouldAddNewRow = true;
+  }
+
   const moved = board.map((bubble) => {
-    const newRow = bubble.row + 1;
+    const newRow = shouldAddNewRow ? bubble.row + 1 : bubble.row;
     const offset = newRow % 2 === 1 ? COL_GAP / 2 : 0;
 
     return {
       ...bubble,
       row: newRow,
       x: START_X + bubble.col * COL_GAP + offset,
-      y: START_Y + newRow * ROW_GAP,
+      y: START_Y + newRow * ROW_GAP + nextDropOffset,
     };
   });
 
-  return [...createTopRow(), ...moved];
+  if (shouldAddNewRow) {
+    return {
+      board: [...createTopRow(nextDropOffset), ...moved],
+      dropOffset: nextDropOffset,
+    };
+  }
+
+  return {
+    board: moved,
+    dropOffset: nextDropOffset,
+  };
 }
 
-function getGridPosition(x, y) {
-  let row = Math.round((y - START_Y) / ROW_GAP);
+function getGridPosition(x, y, dropOffset) {
+  let row = Math.round((y - START_Y - dropOffset) / ROW_GAP);
   row = Math.max(0, Math.min(18, row));
 
   const offset = row % 2 === 1 ? COL_GAP / 2 : 0;
@@ -100,7 +117,7 @@ function getGridPosition(x, y) {
     row,
     col,
     x: START_X + col * COL_GAP + offset,
-    y: START_Y + row * ROW_GAP,
+    y: START_Y + row * ROW_GAP + dropOffset,
   };
 }
 
@@ -148,6 +165,7 @@ function findCluster(start, board) {
     cluster.push(current);
 
     const neighbors = getNeighbors(current, board);
+
     for (const n of neighbors) {
       if (!visited.has(n.id) && n.color === start.color) {
         queue.push(n);
@@ -172,6 +190,7 @@ function findFloating(board) {
     connected.add(current.id);
 
     const neighbors = getNeighbors(current, board);
+
     for (const n of neighbors) {
       if (!connected.has(n.id)) {
         queue.push(n);
@@ -241,9 +260,10 @@ export default function App() {
   const currentColorRef = useRef(randomColor());
   const nextColorRef = useRef(randomColor());
   const particlesRef = useRef([]);
+  const dropOffsetRef = useRef(0);
 
   const [level, setLevel] = useState(1);
-  const [board, setBoard] = useState(() => createBoard(1));
+  const [board, setBoard] = useState(() => createBoard(1, 0));
   const [projectile, setProjectile] = useState(null);
   const [angle, setAngle] = useState(-Math.PI / 2);
   const [score, setScore] = useState(0);
@@ -282,7 +302,9 @@ export default function App() {
 
   function startGame() {
     const newLevel = 1;
-    const newBoard = createBoard(newLevel);
+    dropOffsetRef.current = 0;
+
+    const newBoard = createBoard(newLevel, dropOffsetRef.current);
 
     boardRef.current = newBoard;
     setBoard(newBoard);
@@ -302,7 +324,9 @@ export default function App() {
 
   function nextLevel(currentScore) {
     const newLevel = level + 1;
-    const newBoard = createBoard(newLevel);
+    dropOffsetRef.current = 0;
+
+    const newBoard = createBoard(newLevel, dropOffsetRef.current);
 
     boardRef.current = newBoard;
     setBoard(newBoard);
@@ -375,7 +399,7 @@ export default function App() {
   }
 
   function attachProjectile(p) {
-    const pos = getGridPosition(p.x, p.y);
+    const pos = getGridPosition(p.x, p.y, dropOffsetRef.current);
 
     const newBubble = {
       id: `${pos.row}-${pos.col}-${Date.now()}-${Math.random()}`,
@@ -418,29 +442,35 @@ export default function App() {
 
       setMessage(`Nice shot! +${gained} points`);
     } else {
-      setMessage('No match. Board moved down.');
+      setMessage('No match. Board moved down a little.');
     }
-
-    newBoard = moveBoardDownAndAddRow(newBoard);
-
-    boardRef.current = newBoard;
-    setBoard(newBoard);
 
     projectileRef.current = null;
     setProjectile(null);
 
     const finalScore = score + gained;
 
-    if (newBoard.some((b) => b.y + R >= DANGER_LINE_Y)) {
-      loseGame(finalScore);
+    if (newBoard.length === 0) {
+      const levelScore = finalScore + 100 * level;
+      boardRef.current = [];
+      setBoard([]);
+      setScore(levelScore);
+      updateBest(levelScore);
+      setMessage('Perfect clear. Next level incoming.');
+      setTimeout(() => nextLevel(levelScore), 800);
       return;
     }
 
-    if (newBoard.length === 0) {
-      const levelScore = finalScore + 100 * level;
-      setScore(levelScore);
-      updateBest(levelScore);
-      setTimeout(() => nextLevel(levelScore), 800);
+    const advanced = advanceBoard(newBoard, dropOffsetRef.current);
+
+    dropOffsetRef.current = advanced.dropOffset;
+    newBoard = advanced.board;
+
+    boardRef.current = newBoard;
+    setBoard(newBoard);
+
+    if (newBoard.some((b) => b.y + R >= DANGER_LINE_Y)) {
+      loseGame(finalScore);
     }
   }
 
@@ -556,8 +586,8 @@ export default function App() {
     }
 
     const gradient = ctx.createRadialGradient(
-      bubble.x - 6,
-      bubble.y - 8,
+      bubble.x - 5,
+      bubble.y - 7,
       4,
       bubble.x,
       bubble.y,
@@ -578,7 +608,7 @@ export default function App() {
     ctx.stroke();
 
     ctx.fillStyle = 'white';
-    ctx.font = 'bold 13px Arial';
+    ctx.font = 'bold 11px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(LABELS[bubble.color] || 'B', bubble.x, bubble.y);
@@ -657,14 +687,14 @@ export default function App() {
     ctx.fillStyle = '#0f172a';
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 4;
-    ctx.fillRect(0, -8, 72, 16);
-    ctx.strokeRect(0, -8, 72, 16);
+    ctx.fillRect(0, -7, 68, 14);
+    ctx.strokeRect(0, -7, 68, 14);
 
     ctx.restore();
 
     ctx.fillStyle = '#0052ff';
     ctx.beginPath();
-    ctx.arc(SHOOTER_X, SHOOTER_Y, 28, 0, Math.PI * 2);
+    ctx.arc(SHOOTER_X, SHOOTER_Y, 25, 0, Math.PI * 2);
     ctx.fill();
 
     drawBubble(
@@ -765,7 +795,7 @@ export default function App() {
                   <h2>Ready to Hunt?</h2>
                   <p>
                     Move your mouse to aim. Click to shoot. Every shot drops the
-                    board by one row. Do not touch the red line.
+                    board by half a row. Do not touch the red line.
                   </p>
                   <button onClick={startGame}>Start Game</button>
                 </div>
