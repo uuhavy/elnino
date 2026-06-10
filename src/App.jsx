@@ -71,7 +71,9 @@ function createBoard(level = 1, dropOffset = 0) {
 }
 
 function advanceBoard(board, currentDropOffset) {
-  let nextDropOffset = currentDropOffset + ROW_GAP / 2;
+  const DROP_SPEED = ROW_GAP / 6;
+
+  let nextDropOffset = currentDropOffset + DROP_SPEED;
   let shouldAddNewRow = false;
 
   if (nextDropOffset >= ROW_GAP) {
@@ -442,7 +444,7 @@ export default function App() {
 
       setMessage(`Nice shot! +${gained} points`);
     } else {
-      setMessage('No match. Board moved down a little.');
+      setMessage('No match. Board moved down slowly.');
     }
 
     projectileRef.current = null;
@@ -794,8 +796,8 @@ export default function App() {
                 <div>
                   <h2>Ready to Hunt?</h2>
                   <p>
-                    Move your mouse to aim. Click to shoot. Every shot drops the
-                    board by half a row. Do not touch the red line.
+                    Move your mouse to aim. Click to shoot. The board drops
+                    slowly after each shot. Do not touch the red line.
                   </p>
                   <button onClick={startGame}>Start Game</button>
                 </div>
