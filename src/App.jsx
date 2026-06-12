@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { useAccount } from 'wagmi';
+import WalletBar from './WalletBar.jsx';
 
 const WIDTH = 480;
 const HEIGHT = 720;
@@ -333,6 +335,8 @@ function playTone(type, muted) {
 }
 
 export default function App() {
+  const { isConnected } = useAccount();
+
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
 
@@ -358,7 +362,7 @@ export default function App() {
   });
   const [shots, setShots] = useState(0);
   const [gameState, setGameState] = useState('ready');
-  const [message, setMessage] = useState('Aim, shoot, match 3 bubbles.');
+  const [message, setMessage] = useState('Connect your Base wallet to start hunting.');
   const [muted, setMuted] = useState(false);
 
   const currentAutoDropMs = getAutoDropMs(level, shots);
@@ -377,9 +381,22 @@ export default function App() {
     fontWeight: 800,
   };
 
+  const disabledButtonStyle = {
+    ...actionButtonStyle,
+    opacity: 0.45,
+    cursor: 'not-allowed',
+  };
+
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  useEffect(() => {
+    if (!isConnected && gameState === 'playing') {
+      setGameState('ready');
+      setMessage('Wallet disconnected. Connect your Base wallet to play.');
+    }
+  }, [isConnected, gameState]);
 
   useEffect(() => {
     boardRef.current = board;
@@ -417,6 +434,11 @@ export default function App() {
   }
 
   function startGame() {
+    if (!isConnected) {
+      setMessage('Please connect your Base wallet before playing.');
+      return;
+    }
+
     const newLevel = 1;
     dropOffsetRef.current = 0;
     lastAutoDropRef.current = performance.now();
@@ -440,6 +462,11 @@ export default function App() {
   }
 
   function restartGame() {
+    if (!isConnected) {
+      setMessage('Connect your Base wallet before restarting.');
+      return;
+    }
+
     startGame();
   }
 
@@ -528,6 +555,7 @@ export default function App() {
   }
 
   function shoot() {
+    if (!isConnected) return;
     if (gameState !== 'playing') return;
     if (projectileRef.current) return;
 
@@ -562,6 +590,7 @@ export default function App() {
   }
 
   function autoDropBoard() {
+    if (!isConnected) return;
     if (gameState !== 'playing') return;
     if (projectileRef.current) return;
 
@@ -727,21 +756,21 @@ export default function App() {
       canvas.removeEventListener('touchmove', touchMove);
       canvas.removeEventListener('touchend', touchEnd);
     };
-  }, [gameState, score, level]);
+  }, [gameState, score, level, isConnected]);
 
   useEffect(() => {
     function loop(now) {
       const current = projectileRef.current;
       const autoDropMs = getAutoDropMs(level, shots);
 
-      if (gameState === 'playing') {
+      if (isConnected && gameState === 'playing') {
         if (!current && now - lastAutoDropRef.current >= autoDropMs) {
           lastAutoDropRef.current = now;
           autoDropBoard();
         }
       }
 
-      if (current && gameState === 'playing') {
+      if (current && isConnected && gameState === 'playing') {
         let p = {
           ...current,
           x: current.x + current.vx,
@@ -775,7 +804,7 @@ export default function App() {
     return () => {
       cancelAnimationFrame(animationRef.current);
     };
-  }, [gameState, score, level, shots]);
+  }, [gameState, score, level, shots, isConnected]);
 
   function updateParticles() {
     if (gameState === 'paused') return;
@@ -1084,7 +1113,11 @@ export default function App() {
             </button>
           )}
 
-          <button style={actionButtonStyle} onClick={restartGame}>
+          <button
+            style={isConnected ? actionButtonStyle : disabledButtonStyle}
+            onClick={restartGame}
+            disabled={!isConnected}
+          >
             🔄 Restart
           </button>
 
@@ -1095,6 +1128,8 @@ export default function App() {
           <button style={actionButtonStyle} onClick={shareScore}>
             📤 Share Score
           </button>
+
+          {isConnected && <WalletBar />}
         </div>
 
         <div className="canvas-wrap">
@@ -1107,12 +1142,33 @@ export default function App() {
 
           {gameState !== 'playing' && gameState !== 'paused' && (
             <div className="menu">
-              {gameState === 'ready' && (
+              {gameState === 'ready' && !isConnected && (
+                <div>
+                  <h2>Connect Base First</h2>
+                  <p>
+                    Connect your Base wallet to unlock Elnino Bubble Hunt and
+                    start playing.
+                  </p>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'center',
+                      marginTop: 24,
+                    }}
+                  >
+                    <WalletBar big />
+                  </div>
+                </div>
+              )}
+
+              {gameState === 'ready' && isConnected && (
                 <div>
                   <h2>Ready to Hunt?</h2>
                   <p>
-                    Match 3 bubbles to clear them. Bomb bubbles destroy a small
-                    area. The board drops faster as you survive longer.
+                    Wallet connected. Match 3 bubbles to clear them. Bomb
+                    bubbles destroy a small area. The board drops faster as you
+                    survive longer.
                   </p>
                   <button onClick={startGame}>Start Game</button>
                 </div>
@@ -1122,7 +1178,9 @@ export default function App() {
                 <div>
                   <h2>Game Over</h2>
                   <p>Your final score is {score}</p>
-                  <button onClick={startGame}>Play Again</button>
+                  <button onClick={startGame}>
+                    {isConnected ? 'Play Again' : 'Connect Wallet First'}
+                  </button>
                 </div>
               )}
             </div>
@@ -1131,7 +1189,7 @@ export default function App() {
 
         <div className="game-footer">
           <span>Theme: Base Builder</span>
-          <span>PC: mouse aim + click</span>
+          <span>Connect Base to play</span>
           <span>Bombs: clear small area</span>
         </div>
       </section>
