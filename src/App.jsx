@@ -30,6 +30,9 @@ const LABELS = {
   '#a855f7': 'P',
 };
 
+const GLOBAL_BEST_KEY = 'elnino_bubble_best';
+const LEADERBOARD_KEY = 'elnino_bubble_leaderboard';
+
 function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
@@ -57,6 +60,23 @@ function createRandomShotBubble() {
 function getAutoDropMs(level, shots) {
   const difficultyBoost = (level - 1) * 500 + shots * 120;
   return Math.max(AUTO_DROP_MIN_MS, AUTO_DROP_START_MS - difficultyBoost);
+}
+
+function shortAddress(address) {
+  if (!address) return 'Unknown';
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function loadLeaderboard() {
+  try {
+    return JSON.parse(localStorage.getItem(LEADERBOARD_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLeaderboard(list) {
+  localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(list));
 }
 
 function dist(a, b) {
@@ -335,7 +355,7 @@ function playTone(type, muted) {
 }
 
 export default function App() {
-  const { isConnected } = useAccount();
+  const { address, isConnected } = useAccount();
 
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
@@ -358,14 +378,17 @@ export default function App() {
   const [angle, setAngle] = useState(-Math.PI / 2);
   const [score, setScore] = useState(0);
   const [bestScore, setBestScore] = useState(() => {
-    return Number(localStorage.getItem('elnino_bubble_best')) || 0;
+    return Number(localStorage.getItem(GLOBAL_BEST_KEY)) || 0;
   });
+  const [playerBest, setPlayerBest] = useState(0);
+  const [leaderboard, setLeaderboard] = useState(() => loadLeaderboard());
   const [shots, setShots] = useState(0);
   const [gameState, setGameState] = useState('ready');
   const [message, setMessage] = useState('Connect your Base wallet to start hunting.');
   const [muted, setMuted] = useState(false);
 
   const currentAutoDropMs = getAutoDropMs(level, shots);
+  const topPlayers = [...leaderboard].sort((a, b) => b.score - a.score).slice(0, 5);
 
   const actionButtonStyle = {
     border: 0,
@@ -387,9 +410,40 @@ export default function App() {
     cursor: 'not-allowed',
   };
 
+  const panelStyle = {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 22,
+    background: 'rgba(255, 255, 255, 0.055)',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+  };
+
+  const rowStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: '8px 0',
+    borderBottom: '1px solid rgba(255,255,255,0.06)',
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.78)',
+  };
+
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  useEffect(() => {
+    const list = loadLeaderboard();
+    setLeaderboard(list);
+
+    if (!address) {
+      setPlayerBest(0);
+      return;
+    }
+
+    const player = list.find((item) => item.address?.toLowerCase() === address.toLowerCase());
+    setPlayerBest(player?.score || 0);
+  }, [address]);
 
   useEffect(() => {
     if (!isConnected && gameState === 'playing') {
@@ -410,13 +464,45 @@ export default function App() {
     angleRef.current = angle;
   }, [angle]);
 
+  function updateLeaderboard(value) {
+    if (!address) return;
+
+    const list = loadLeaderboard();
+    const lower = address.toLowerCase();
+    const current = list.find((item) => item.address?.toLowerCase() === lower);
+
+    if (current && current.score >= value) {
+      setPlayerBest(current.score);
+      setLeaderboard(list);
+      return;
+    }
+
+    const nextList = [
+      ...list.filter((item) => item.address?.toLowerCase() !== lower),
+      {
+        address,
+        name: shortAddress(address),
+        score: value,
+        updatedAt: Date.now(),
+      },
+    ]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
+
+    saveLeaderboard(nextList);
+    setLeaderboard(nextList);
+    setPlayerBest(value);
+  }
+
   function updateBest(value) {
-    const oldBest = Number(localStorage.getItem('elnino_bubble_best')) || 0;
+    const oldBest = Number(localStorage.getItem(GLOBAL_BEST_KEY)) || 0;
 
     if (value > oldBest) {
       setBestScore(value);
-      localStorage.setItem('elnino_bubble_best', String(value));
+      localStorage.setItem(GLOBAL_BEST_KEY, String(value));
     }
+
+    updateLeaderboard(value);
   }
 
   function resetShotBubbles() {
@@ -489,7 +575,8 @@ export default function App() {
   }
 
   async function shareScore() {
-    const text = `I scored ${score} points in Elnino Bubble Hunt. Best: ${bestScore}. Level: ${level}.`;
+    const player = address ? shortAddress(address) : 'Guest';
+    const text = `I scored ${score} points in Elnino Bubble Hunt. Player: ${player}. Best: ${bestScore}. Level: ${level}.`;
 
     try {
       if (navigator.share) {
@@ -1093,6 +1180,7 @@ export default function App() {
             <span>Score</span>
             <strong>{score}</strong>
             <small>Best: {bestScore}</small>
+            <small>Your Best: {playerBest}</small>
             <small>Level: {level} | Shots: {shots}</small>
             <small>Drop: {Math.ceil(currentAutoDropMs / 1000)}s</small>
           </div>
@@ -1187,10 +1275,49 @@ export default function App() {
           )}
         </div>
 
+        <div style={panelStyle}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 12,
+              alignItems: 'center',
+              marginBottom: 6,
+            }}
+          >
+            <strong style={{ fontSize: 15 }}>🏆 Local Leaderboard</strong>
+            <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+              wallet based
+            </span>
+          </div>
+
+          {isConnected && (
+            <div style={rowStyle}>
+              <span>Your wallet</span>
+              <strong>{shortAddress(address)}</strong>
+            </div>
+          )}
+
+          {topPlayers.length === 0 && (
+            <div style={{ padding: '10px 0', color: 'rgba(255,255,255,0.62)', fontSize: 13 }}>
+              No scores yet. Connect wallet and start hunting.
+            </div>
+          )}
+
+          {topPlayers.map((player, index) => (
+            <div key={player.address} style={rowStyle}>
+              <span>
+                #{index + 1} {shortAddress(player.address)}
+              </span>
+              <strong>{player.score}</strong>
+            </div>
+          ))}
+        </div>
+
         <div className="game-footer">
           <span>Theme: Base Builder</span>
           <span>Connect Base to play</span>
-          <span>Bombs: clear small area</span>
+          <span>Leaderboard by wallet</span>
         </div>
       </section>
     </main>
