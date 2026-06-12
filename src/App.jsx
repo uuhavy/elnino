@@ -283,7 +283,9 @@ function normalizeAngle(angle) {
   return angle;
 }
 
-function playTone(type) {
+function playTone(type, muted) {
+  if (muted) return;
+
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     const audio = new AudioContext();
@@ -326,7 +328,7 @@ function playTone(type) {
       osc.stop(audio.currentTime + 0.22);
     }
   } catch {
-    // ignore audio errors
+    // Ignore audio errors
   }
 }
 
@@ -344,6 +346,7 @@ export default function App() {
   const particlesRef = useRef([]);
   const dropOffsetRef = useRef(0);
   const lastAutoDropRef = useRef(performance.now());
+  const mutedRef = useRef(false);
 
   const [level, setLevel] = useState(1);
   const [board, setBoard] = useState(() => createBoard(1, 0));
@@ -356,8 +359,27 @@ export default function App() {
   const [shots, setShots] = useState(0);
   const [gameState, setGameState] = useState('ready');
   const [message, setMessage] = useState('Aim, shoot, match 3 bubbles.');
+  const [muted, setMuted] = useState(false);
 
   const currentAutoDropMs = getAutoDropMs(level, shots);
+
+  const actionButtonStyle = {
+    border: 0,
+    borderRadius: '999px',
+    padding: '9px 12px',
+    color: 'white',
+    background: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderStyle: 'solid',
+    borderWidth: 1,
+    cursor: 'pointer',
+    fontSize: 12,
+    fontWeight: 800,
+  };
+
+  useEffect(() => {
+    mutedRef.current = muted;
+  }, [muted]);
 
   useEffect(() => {
     boardRef.current = board;
@@ -417,6 +439,49 @@ export default function App() {
     setGameState('playing');
   }
 
+  function restartGame() {
+    startGame();
+  }
+
+  function togglePause() {
+    if (gameState === 'playing') {
+      setGameState('paused');
+      setMessage('Paused. Resume when you are ready.');
+      return;
+    }
+
+    if (gameState === 'paused') {
+      lastAutoDropRef.current = performance.now();
+      setGameState('playing');
+      setMessage('Back in the hunt.');
+    }
+  }
+
+  function toggleMute() {
+    setMuted((value) => !value);
+  }
+
+  async function shareScore() {
+    const text = `I scored ${score} points in Elnino Bubble Hunt. Best: ${bestScore}. Level: ${level}.`;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: 'Elnino Bubble Hunt',
+          text,
+          url: window.location.href,
+        });
+        setMessage('Score shared.');
+        return;
+      }
+
+      await navigator.clipboard.writeText(`${text} ${window.location.href}`);
+      setMessage('Score copied to clipboard.');
+    } catch {
+      setMessage('Share cancelled.');
+    }
+  }
+
   function nextLevel(currentScore) {
     const newLevel = level + 1;
     dropOffsetRef.current = 0;
@@ -466,7 +531,7 @@ export default function App() {
     if (gameState !== 'playing') return;
     if (projectileRef.current) return;
 
-    playTone('shoot');
+    playTone('shoot', mutedRef.current);
 
     const speed = 8.5;
     const bubble = currentBubbleRef.current;
@@ -490,7 +555,7 @@ export default function App() {
   }
 
   function loseGame(finalScore) {
-    playTone('lose');
+    playTone('lose', mutedRef.current);
     updateBest(finalScore);
     setGameState('gameover');
     setMessage('Game over. The bubbles touched the red line.');
@@ -532,7 +597,7 @@ export default function App() {
     let gained = 0;
 
     if (newBubble.type === 'bomb') {
-      playTone('bomb');
+      playTone('bomb', mutedRef.current);
 
       const blastRadius = R * 4.1;
       const blasted = newBoard.filter((b) => dist(b, newBubble) <= blastRadius);
@@ -560,7 +625,7 @@ export default function App() {
       const cluster = findCluster(newBubble, newBoard);
 
       if (cluster.length >= 3) {
-        playTone('pop');
+        playTone('pop', mutedRef.current);
 
         const removeIds = new Set(cluster.map((b) => b.id));
         newBoard = newBoard.filter((b) => !removeIds.has(b.id));
@@ -713,6 +778,8 @@ export default function App() {
   }, [gameState, score, level, shots]);
 
   function updateParticles() {
+    if (gameState === 'paused') return;
+
     particlesRef.current = particlesRef.current
       .map((p) => ({
         ...p,
@@ -865,6 +932,8 @@ export default function App() {
   }
 
   function drawAimLine(ctx) {
+    if (gameState !== 'playing') return;
+
     ctx.save();
 
     ctx.setLineDash([8, 8]);
@@ -931,6 +1000,26 @@ export default function App() {
     );
   }
 
+  function drawPauseOverlay(ctx) {
+    if (gameState !== 'paused') return;
+
+    ctx.save();
+
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.58)';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 42px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', WIDTH / 2, HEIGHT / 2 - 10);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.font = 'bold 14px Arial';
+    ctx.fillText('Tap Resume to continue', WIDTH / 2, HEIGHT / 2 + 22);
+
+    ctx.restore();
+  }
+
   function drawHud(ctx, now) {
     drawDropTimer(ctx, now);
   }
@@ -959,6 +1048,7 @@ export default function App() {
     drawShooter(ctx);
     drawNextBubble(ctx);
     drawHud(ctx, now);
+    drawPauseOverlay(ctx);
   }
 
   return (
@@ -979,6 +1069,34 @@ export default function App() {
           </div>
         </div>
 
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            marginBottom: 12,
+            padding: '0 6px',
+          }}
+        >
+          {(gameState === 'playing' || gameState === 'paused') && (
+            <button style={actionButtonStyle} onClick={togglePause}>
+              {gameState === 'paused' ? '▶ Resume' : '⏸ Pause'}
+            </button>
+          )}
+
+          <button style={actionButtonStyle} onClick={restartGame}>
+            🔄 Restart
+          </button>
+
+          <button style={actionButtonStyle} onClick={toggleMute}>
+            {muted ? '🔇 Muted' : '🔊 Sound'}
+          </button>
+
+          <button style={actionButtonStyle} onClick={shareScore}>
+            📤 Share Score
+          </button>
+        </div>
+
         <div className="canvas-wrap">
           <canvas
             ref={canvasRef}
@@ -987,7 +1105,7 @@ export default function App() {
             className="game-canvas"
           />
 
-          {gameState !== 'playing' && (
+          {gameState !== 'playing' && gameState !== 'paused' && (
             <div className="menu">
               {gameState === 'ready' && (
                 <div>
