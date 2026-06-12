@@ -12,6 +12,9 @@ const COLS = 12;
 
 const DANGER_LINE_Y = HEIGHT - 158;
 
+const AUTO_DROP_START_MS = 10000;
+const AUTO_DROP_MIN_MS = 5000;
+
 const SHOOTER_X = WIDTH / 2;
 const SHOOTER_Y = HEIGHT - 72;
 
@@ -29,11 +32,36 @@ function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
 }
 
+function randomBubbleType() {
+  return Math.random() < 0.12 ? 'bomb' : 'normal';
+}
+
+function createRandomShotBubble() {
+  const type = randomBubbleType();
+
+  if (type === 'bomb') {
+    return {
+      type: 'bomb',
+      color: '#f97316',
+    };
+  }
+
+  return {
+    type: 'normal',
+    color: randomColor(),
+  };
+}
+
+function getAutoDropMs(level, shots) {
+  const difficultyBoost = (level - 1) * 500 + shots * 120;
+  return Math.max(AUTO_DROP_MIN_MS, AUTO_DROP_START_MS - difficultyBoost);
+}
+
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function createBubble(row, col, color = randomColor(), dropOffset = 0) {
+function createBubble(row, col, color = randomColor(), dropOffset = 0, type = 'normal') {
   const offset = row % 2 === 1 ? COL_GAP / 2 : 0;
 
   return {
@@ -43,6 +71,7 @@ function createBubble(row, col, color = randomColor(), dropOffset = 0) {
     x: START_X + col * COL_GAP + offset,
     y: START_Y + row * ROW_GAP + dropOffset,
     color,
+    type,
   };
 }
 
@@ -50,7 +79,17 @@ function createTopRow(dropOffset = 0) {
   const bubbles = [];
 
   for (let col = 0; col < COLS; col++) {
-    bubbles.push(createBubble(0, col, randomColor(), dropOffset));
+    const isBomb = Math.random() < 0.05;
+
+    bubbles.push(
+      createBubble(
+        0,
+        col,
+        isBomb ? '#f97316' : randomColor(),
+        dropOffset,
+        isBomb ? 'bomb' : 'normal'
+      )
+    );
   }
 
   return bubbles;
@@ -63,14 +102,25 @@ function createBoard(level = 1, dropOffset = 0) {
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < COLS; col++) {
       if (row > 5 && Math.random() > 0.65) continue;
-      board.push(createBubble(row, col, randomColor(), dropOffset));
+
+      const isBomb = Math.random() < 0.035;
+
+      board.push(
+        createBubble(
+          row,
+          col,
+          isBomb ? '#f97316' : randomColor(),
+          dropOffset,
+          isBomb ? 'bomb' : 'normal'
+        )
+      );
     }
   }
 
   return board;
 }
 
-function advanceBoard(board, currentDropOffset) {
+function advanceBoardSlow(board, currentDropOffset) {
   const DROP_SPEED = ROW_GAP / 6;
 
   let nextDropOffset = currentDropOffset + DROP_SPEED;
@@ -103,6 +153,25 @@ function advanceBoard(board, currentDropOffset) {
   return {
     board: moved,
     dropOffset: nextDropOffset,
+  };
+}
+
+function advanceBoardOneFullRow(board, currentDropOffset) {
+  const moved = board.map((bubble) => {
+    const newRow = bubble.row + 1;
+    const offset = newRow % 2 === 1 ? COL_GAP / 2 : 0;
+
+    return {
+      ...bubble,
+      row: newRow,
+      x: START_X + bubble.col * COL_GAP + offset,
+      y: START_Y + newRow * ROW_GAP + currentDropOffset,
+    };
+  });
+
+  return {
+    board: [...createTopRow(currentDropOffset), ...moved],
+    dropOffset: currentDropOffset,
   };
 }
 
@@ -161,6 +230,7 @@ function findCluster(start, board) {
 
     if (!current) continue;
     if (visited.has(current.id)) continue;
+    if (current.type === 'bomb') continue;
     if (current.color !== start.color) continue;
 
     visited.add(current.id);
@@ -169,7 +239,7 @@ function findCluster(start, board) {
     const neighbors = getNeighbors(current, board);
 
     for (const n of neighbors) {
-      if (!visited.has(n.id) && n.color === start.color) {
+      if (!visited.has(n.id) && n.type !== 'bomb' && n.color === start.color) {
         queue.push(n);
       }
     }
@@ -240,6 +310,14 @@ function playTone(type) {
       osc.stop(audio.currentTime + 0.12);
     }
 
+    if (type === 'bomb') {
+      osc.frequency.value = 120;
+      gain.gain.value = 0.1;
+      osc.type = 'sawtooth';
+      osc.start();
+      osc.stop(audio.currentTime + 0.18);
+    }
+
     if (type === 'lose') {
       osc.frequency.value = 180;
       gain.gain.value = 0.08;
@@ -259,10 +337,13 @@ export default function App() {
   const boardRef = useRef([]);
   const projectileRef = useRef(null);
   const angleRef = useRef(-Math.PI / 2);
-  const currentColorRef = useRef(randomColor());
-  const nextColorRef = useRef(randomColor());
+
+  const currentBubbleRef = useRef(createRandomShotBubble());
+  const nextBubbleRef = useRef(createRandomShotBubble());
+
   const particlesRef = useRef([]);
   const dropOffsetRef = useRef(0);
+  const lastAutoDropRef = useRef(performance.now());
 
   const [level, setLevel] = useState(1);
   const [board, setBoard] = useState(() => createBoard(1, 0));
@@ -275,6 +356,8 @@ export default function App() {
   const [shots, setShots] = useState(0);
   const [gameState, setGameState] = useState('ready');
   const [message, setMessage] = useState('Aim, shoot, match 3 bubbles.');
+
+  const currentAutoDropMs = getAutoDropMs(level, shots);
 
   useEffect(() => {
     boardRef.current = board;
@@ -297,14 +380,24 @@ export default function App() {
     }
   }
 
-  function resetColors() {
-    currentColorRef.current = randomColor();
-    nextColorRef.current = randomColor();
+  function resetShotBubbles() {
+    currentBubbleRef.current = createRandomShotBubble();
+    nextBubbleRef.current = createRandomShotBubble();
+  }
+
+  function checkDanger(boardToCheck, finalScore) {
+    if (boardToCheck.some((b) => b.y + R >= DANGER_LINE_Y)) {
+      loseGame(finalScore);
+      return true;
+    }
+
+    return false;
   }
 
   function startGame() {
     const newLevel = 1;
     dropOffsetRef.current = 0;
+    lastAutoDropRef.current = performance.now();
 
     const newBoard = createBoard(newLevel, dropOffsetRef.current);
 
@@ -315,7 +408,7 @@ export default function App() {
     setProjectile(null);
 
     particlesRef.current = [];
-    resetColors();
+    resetShotBubbles();
 
     setLevel(newLevel);
     setScore(0);
@@ -327,6 +420,7 @@ export default function App() {
   function nextLevel(currentScore) {
     const newLevel = level + 1;
     dropOffsetRef.current = 0;
+    lastAutoDropRef.current = performance.now();
 
     const newBoard = createBoard(newLevel, dropOffsetRef.current);
 
@@ -337,7 +431,7 @@ export default function App() {
     setProjectile(null);
 
     particlesRef.current = [];
-    resetColors();
+    resetShotBubbles();
 
     setLevel(newLevel);
     setMessage(`Level ${newLevel}. More bubbles, more points.`);
@@ -345,13 +439,13 @@ export default function App() {
     updateBest(currentScore);
   }
 
-  function createExplosion(bubbles) {
+  function createExplosion(bubbles, sizeBoost = 1) {
     const particles = [];
 
     for (const bubble of bubbles) {
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 8 * sizeBoost; i++) {
         const angleValue = Math.random() * Math.PI * 2;
-        const speed = 1.5 + Math.random() * 3;
+        const speed = 1.5 + Math.random() * 3.5;
 
         particles.push({
           x: bubble.x,
@@ -359,7 +453,7 @@ export default function App() {
           vx: Math.cos(angleValue) * speed,
           vy: Math.sin(angleValue) * speed,
           life: 28,
-          color: bubble.color,
+          color: bubble.type === 'bomb' ? '#f97316' : bubble.color,
           size: 2 + Math.random() * 3,
         });
       }
@@ -375,20 +469,22 @@ export default function App() {
     playTone('shoot');
 
     const speed = 8.5;
+    const bubble = currentBubbleRef.current;
 
     const p = {
       x: SHOOTER_X,
       y: SHOOTER_Y,
       vx: Math.cos(angleRef.current) * speed,
       vy: Math.sin(angleRef.current) * speed,
-      color: currentColorRef.current,
+      color: bubble.color,
+      type: bubble.type,
     };
 
     projectileRef.current = p;
     setProjectile(p);
 
-    currentColorRef.current = nextColorRef.current;
-    nextColorRef.current = randomColor();
+    currentBubbleRef.current = nextBubbleRef.current;
+    nextBubbleRef.current = createRandomShotBubble();
 
     setShots((v) => v + 1);
   }
@@ -398,6 +494,20 @@ export default function App() {
     updateBest(finalScore);
     setGameState('gameover');
     setMessage('Game over. The bubbles touched the red line.');
+  }
+
+  function autoDropBoard() {
+    if (gameState !== 'playing') return;
+    if (projectileRef.current) return;
+
+    const advanced = advanceBoardOneFullRow(boardRef.current, dropOffsetRef.current);
+
+    dropOffsetRef.current = advanced.dropOffset;
+    boardRef.current = advanced.board;
+    setBoard(advanced.board);
+    setMessage('The board dropped one row. Keep hunting.');
+
+    checkDanger(advanced.board, score);
   }
 
   function attachProjectile(p) {
@@ -410,6 +520,7 @@ export default function App() {
       x: pos.x,
       y: pos.y,
       color: p.color,
+      type: p.type,
     };
 
     let newBoard = boardRef.current.filter(
@@ -418,23 +529,25 @@ export default function App() {
 
     newBoard.push(newBubble);
 
-    const cluster = findCluster(newBubble, newBoard);
     let gained = 0;
 
-    if (cluster.length >= 3) {
-      playTone('pop');
+    if (newBubble.type === 'bomb') {
+      playTone('bomb');
 
-      const removeIds = new Set(cluster.map((b) => b.id));
-      newBoard = newBoard.filter((b) => !removeIds.has(b.id));
+      const blastRadius = R * 4.1;
+      const blasted = newBoard.filter((b) => dist(b, newBubble) <= blastRadius);
+      const blastedIds = new Set(blasted.map((b) => b.id));
+
+      newBoard = newBoard.filter((b) => !blastedIds.has(b.id));
 
       const floating = findFloating(newBoard);
       const floatingIds = new Set(floating.map((b) => b.id));
 
       newBoard = newBoard.filter((b) => !floatingIds.has(b.id));
 
-      createExplosion([...cluster, ...floating]);
+      createExplosion([...blasted, ...floating], 2);
 
-      gained = cluster.length * 10 + floating.length * 20 + level * 5;
+      gained = blasted.length * 15 + floating.length * 20 + level * 10;
 
       setScore((oldScore) => {
         const newScore = oldScore + gained;
@@ -442,9 +555,35 @@ export default function App() {
         return newScore;
       });
 
-      setMessage(`Nice shot! +${gained} points`);
+      setMessage(`Bomb blast! +${gained} points`);
     } else {
-      setMessage('No match. Board moved down slowly.');
+      const cluster = findCluster(newBubble, newBoard);
+
+      if (cluster.length >= 3) {
+        playTone('pop');
+
+        const removeIds = new Set(cluster.map((b) => b.id));
+        newBoard = newBoard.filter((b) => !removeIds.has(b.id));
+
+        const floating = findFloating(newBoard);
+        const floatingIds = new Set(floating.map((b) => b.id));
+
+        newBoard = newBoard.filter((b) => !floatingIds.has(b.id));
+
+        createExplosion([...cluster, ...floating], 1);
+
+        gained = cluster.length * 10 + floating.length * 20 + level * 5;
+
+        setScore((oldScore) => {
+          const newScore = oldScore + gained;
+          updateBest(newScore);
+          return newScore;
+        });
+
+        setMessage(`Nice shot! +${gained} points`);
+      } else {
+        setMessage('No match. Board moved down slowly.');
+      }
     }
 
     projectileRef.current = null;
@@ -463,7 +602,7 @@ export default function App() {
       return;
     }
 
-    const advanced = advanceBoard(newBoard, dropOffsetRef.current);
+    const advanced = advanceBoardSlow(newBoard, dropOffsetRef.current);
 
     dropOffsetRef.current = advanced.dropOffset;
     newBoard = advanced.board;
@@ -471,9 +610,7 @@ export default function App() {
     boardRef.current = newBoard;
     setBoard(newBoard);
 
-    if (newBoard.some((b) => b.y + R >= DANGER_LINE_Y)) {
-      loseGame(finalScore);
-    }
+    checkDanger(newBoard, finalScore);
   }
 
   useEffect(() => {
@@ -528,8 +665,16 @@ export default function App() {
   }, [gameState, score, level]);
 
   useEffect(() => {
-    function loop() {
+    function loop(now) {
       const current = projectileRef.current;
+      const autoDropMs = getAutoDropMs(level, shots);
+
+      if (gameState === 'playing') {
+        if (!current && now - lastAutoDropRef.current >= autoDropMs) {
+          lastAutoDropRef.current = now;
+          autoDropBoard();
+        }
+      }
 
       if (current && gameState === 'playing') {
         let p = {
@@ -556,7 +701,7 @@ export default function App() {
       }
 
       updateParticles();
-      draw();
+      draw(now);
       animationRef.current = requestAnimationFrame(loop);
     }
 
@@ -565,7 +710,7 @@ export default function App() {
     return () => {
       cancelAnimationFrame(animationRef.current);
     };
-  }, [gameState, score, level]);
+  }, [gameState, score, level, shots]);
 
   function updateParticles() {
     particlesRef.current = particlesRef.current
@@ -583,8 +728,41 @@ export default function App() {
     ctx.save();
 
     if (glow) {
-      ctx.shadowBlur = 16;
-      ctx.shadowColor = bubble.color;
+      ctx.shadowBlur = bubble.type === 'bomb' ? 24 : 16;
+      ctx.shadowColor = bubble.type === 'bomb' ? '#f97316' : bubble.color;
+    }
+
+    if (bubble.type === 'bomb') {
+      const gradient = ctx.createRadialGradient(
+        bubble.x - 5,
+        bubble.y - 7,
+        4,
+        bubble.x,
+        bubble.y,
+        R
+      );
+
+      gradient.addColorStop(0, '#fff7ed');
+      gradient.addColorStop(0.3, '#f97316');
+      gradient.addColorStop(1, '#7c2d12');
+
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(bubble.x, bubble.y, R, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 13px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✦', bubble.x, bubble.y + 1);
+
+      ctx.restore();
+      return;
     }
 
     const gradient = ctx.createRadialGradient(
@@ -662,6 +840,30 @@ export default function App() {
     ctx.fillText('DANGER LINE', WIDTH - 16, DANGER_LINE_Y - 8);
   }
 
+  function drawDropTimer(ctx, now) {
+    if (gameState !== 'playing') return;
+
+    const autoDropMs = getAutoDropMs(level, shots);
+    const elapsed = Math.min(autoDropMs, now - lastAutoDropRef.current);
+    const progress = elapsed / autoDropMs;
+
+    const x = 24;
+    const y = HEIGHT - 128;
+    const w = 150;
+    const h = 8;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillRect(x, y, w, h);
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(x, y, w * progress, h);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.font = 'bold 11px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(`AUTO DROP ${Math.ceil(autoDropMs / 1000)}S`, x, y - 6);
+  }
+
   function drawAimLine(ctx) {
     ctx.save();
 
@@ -704,7 +906,8 @@ export default function App() {
       {
         x: SHOOTER_X,
         y: SHOOTER_Y,
-        color: currentColorRef.current,
+        color: currentBubbleRef.current.color,
+        type: currentBubbleRef.current.type,
       },
       true
     );
@@ -721,26 +924,18 @@ export default function App() {
       {
         x: WIDTH - 58,
         y: HEIGHT - 74,
-        color: nextColorRef.current,
+        color: nextBubbleRef.current.color,
+        type: nextBubbleRef.current.type,
       },
       true
     );
   }
 
-  function drawHud(ctx) {
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 18px Arial';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Score: ${score}`, 20, 32);
-
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.font = 'bold 13px Arial';
-    ctx.fillText(`Best: ${bestScore}`, 20, 54);
-    ctx.fillText(`Shots: ${shots}`, 20, 74);
-    ctx.fillText(`Level: ${level}`, 20, 94);
+  function drawHud(ctx, now) {
+    drawDropTimer(ctx, now);
   }
 
-  function draw() {
+  function draw(now = performance.now()) {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -763,7 +958,7 @@ export default function App() {
 
     drawShooter(ctx);
     drawNextBubble(ctx);
-    drawHud(ctx);
+    drawHud(ctx, now);
   }
 
   return (
@@ -779,6 +974,8 @@ export default function App() {
             <span>Score</span>
             <strong>{score}</strong>
             <small>Best: {bestScore}</small>
+            <small>Level: {level} | Shots: {shots}</small>
+            <small>Drop: {Math.ceil(currentAutoDropMs / 1000)}s</small>
           </div>
         </div>
 
@@ -796,8 +993,8 @@ export default function App() {
                 <div>
                   <h2>Ready to Hunt?</h2>
                   <p>
-                    Move your mouse to aim. Click to shoot. The board drops
-                    slowly after each shot. Do not touch the red line.
+                    Match 3 bubbles to clear them. Bomb bubbles destroy a small
+                    area. The board drops faster as you survive longer.
                   </p>
                   <button onClick={startGame}>Start Game</button>
                 </div>
@@ -817,7 +1014,7 @@ export default function App() {
         <div className="game-footer">
           <span>Theme: Base Builder</span>
           <span>PC: mouse aim + click</span>
-          <span>Mobile: drag + release</span>
+          <span>Bombs: clear small area</span>
         </div>
       </section>
     </main>
