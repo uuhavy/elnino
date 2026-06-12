@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAccount } from 'wagmi';
+import {
+  useAccount,
+  useReadContract,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from 'wagmi';
+import { base } from 'wagmi/chains';
 import WalletBar from './WalletBar.jsx';
 
 const WIDTH = 480;
@@ -32,6 +38,43 @@ const LABELS = {
 
 const GLOBAL_BEST_KEY = 'elnino_bubble_best';
 const LEADERBOARD_KEY = 'elnino_bubble_leaderboard';
+
+const CONTRACT_ADDRESS = '0x73d307678afacad33b7737267a0f0c872622ca0f';
+
+const CONTRACT_ABI = [
+  {
+    inputs: [{ internalType: 'uint256', name: 'score', type: 'uint256' }],
+    name: 'submitScore',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function',
+  },
+  {
+    inputs: [{ internalType: 'address', name: '', type: 'address' }],
+    name: 'bestScores',
+    outputs: [{ internalType: 'uint256', name: '', type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function',
+  },
+  {
+    inputs: [],
+    name: 'getLeaderboard',
+    outputs: [
+      {
+        components: [
+          { internalType: 'address', name: 'wallet', type: 'address' },
+          { internalType: 'uint256', name: 'bestScore', type: 'uint256' },
+          { internalType: 'uint256', name: 'updatedAt', type: 'uint256' },
+        ],
+        internalType: 'struct ElninoBubbleLeaderboard.Player[]',
+        name: '',
+        type: 'tuple[]',
+      },
+    ],
+    stateMutability: 'view',
+    type: 'function',
+  },
+];
 
 function randomColor() {
   return COLORS[Math.floor(Math.random() * COLORS.length)];
@@ -390,6 +433,66 @@ export default function App() {
   const currentAutoDropMs = getAutoDropMs(level, shots);
   const topPlayers = [...leaderboard].sort((a, b) => b.score - a.score).slice(0, 5);
 
+  const {
+    data: onchainBestRaw,
+    refetch: refetchOnchainBest,
+  } = useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: CONTRACT_ABI,
+    functionName: 'bestScores',
+    args: address ? [address] : undefined,
+    query: {
+      enabled: Boolean(address),
+    },
+  });
+
+  const {
+    data: onchainLeaderboardRaw,
+    refetch: refetchOnchainLeaderboard,
+  } = useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: CONTRACT_ABI,
+    functionName: 'getLeaderboard',
+    query: {
+      refetchInterval: 12000,
+    },
+  });
+
+  const {
+    data: submitHash,
+    error: submitError,
+    isPending: isSubmitPending,
+    writeContract,
+  } = useWriteContract();
+
+  const {
+    isLoading: isConfirming,
+    isSuccess: isConfirmed,
+  } = useWaitForTransactionReceipt({
+    hash: submitHash,
+  });
+
+  const onchainBest = Number(onchainBestRaw || 0n);
+
+  const onchainTopPlayers = Array.isArray(onchainLeaderboardRaw)
+    ? [...onchainLeaderboardRaw]
+        .map((player) => ({
+          address: player.wallet,
+          score: Number(player.bestScore),
+        }))
+        .filter((player) => player.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5)
+    : [];
+
+  const canSubmitOnchain =
+    isConnected &&
+    gameState === 'gameover' &&
+    score > 0 &&
+    score > onchainBest &&
+    !isSubmitPending &&
+    !isConfirming;
+
   const actionButtonStyle = {
     border: 0,
     borderRadius: '999px',
@@ -402,6 +505,13 @@ export default function App() {
     cursor: 'pointer',
     fontSize: 12,
     fontWeight: 800,
+  };
+
+  const primaryButtonStyle = {
+    ...actionButtonStyle,
+    background:
+      'radial-gradient(circle at top left, rgba(255,255,255,0.35), transparent 30%), linear-gradient(135deg, #0052ff, #38bdf8)',
+    boxShadow: '0 14px 34px rgba(0, 82, 255, 0.36)',
   };
 
   const disabledButtonStyle = {
@@ -446,6 +556,20 @@ export default function App() {
   }, [address]);
 
   useEffect(() => {
+    if (isConfirmed) {
+      setMessage('Score submitted onchain successfully.');
+      refetchOnchainBest();
+      refetchOnchainLeaderboard();
+    }
+  }, [isConfirmed, refetchOnchainBest, refetchOnchainLeaderboard]);
+
+  useEffect(() => {
+    if (submitError) {
+      setMessage('Onchain submit failed or was rejected.');
+    }
+  }, [submitError]);
+
+  useEffect(() => {
     if (!isConnected && gameState === 'playing') {
       setGameState('ready');
       setMessage('Wallet disconnected. Connect your Base wallet to play.');
@@ -463,6 +587,37 @@ export default function App() {
   useEffect(() => {
     angleRef.current = angle;
   }, [angle]);
+
+  function submitScoreOnchain() {
+    if (!canSubmitOnchain) {
+      if (!isConnected) {
+        setMessage('Connect your Base wallet before submitting.');
+        return;
+      }
+
+      if (gameState !== 'gameover') {
+        setMessage('Submit score after the game is over.');
+        return;
+      }
+
+      if (score <= onchainBest) {
+        setMessage('Your score is not higher than your onchain best.');
+        return;
+      }
+
+      return;
+    }
+
+    setMessage('Confirm transaction in your wallet.');
+
+    writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: CONTRACT_ABI,
+      functionName: 'submitScore',
+      args: [BigInt(score)],
+      chainId: base.id,
+    });
+  }
 
   function updateLeaderboard(value) {
     if (!address) return;
@@ -1181,6 +1336,7 @@ export default function App() {
             <strong>{score}</strong>
             <small>Best: {bestScore}</small>
             <small>Your Best: {playerBest}</small>
+            <small>Onchain: {onchainBest}</small>
             <small>Level: {level} | Shots: {shots}</small>
             <small>Drop: {Math.ceil(currentAutoDropMs / 1000)}s</small>
           </div>
@@ -1266,13 +1422,79 @@ export default function App() {
                 <div>
                   <h2>Game Over</h2>
                   <p>Your final score is {score}</p>
-                  <button onClick={startGame}>
-                    {isConnected ? 'Play Again' : 'Connect Wallet First'}
-                  </button>
+
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'center',
+                      gap: 10,
+                      flexWrap: 'wrap',
+                      marginTop: 18,
+                    }}
+                  >
+                    <button onClick={startGame}>
+                      {isConnected ? 'Play Again' : 'Connect Wallet First'}
+                    </button>
+
+                    <button
+                      onClick={submitScoreOnchain}
+                      disabled={!canSubmitOnchain}
+                      style={canSubmitOnchain ? primaryButtonStyle : disabledButtonStyle}
+                    >
+                      {isSubmitPending && 'Confirming...'}
+                      {isConfirming && 'Submitting...'}
+                      {!isSubmitPending &&
+                        !isConfirming &&
+                        score > onchainBest &&
+                        'Submit Onchain'}
+                      {!isSubmitPending &&
+                        !isConfirming &&
+                        score <= onchainBest &&
+                        'Not Higher'}
+                    </button>
+                  </div>
+
+                  {submitHash && (
+                    <p style={{ marginTop: 12, fontSize: 12 }}>
+                      Tx sent. Waiting for confirmation.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
           )}
+        </div>
+
+        <div style={panelStyle}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 12,
+              alignItems: 'center',
+              marginBottom: 6,
+            }}
+          >
+            <strong style={{ fontSize: 15 }}>⛓️ Onchain Leaderboard</strong>
+            <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>
+              Base Mainnet
+            </span>
+          </div>
+
+          {onchainTopPlayers.length === 0 && (
+            <div style={{ padding: '10px 0', color: 'rgba(255,255,255,0.62)', fontSize: 13 }}>
+              No onchain scores yet. Finish a game and submit your score.
+            </div>
+          )}
+
+          {onchainTopPlayers.map((player, index) => (
+            <div key={player.address} style={rowStyle}>
+              <span>
+                #{index + 1} {shortAddress(player.address)}
+              </span>
+              <strong>{player.score}</strong>
+            </div>
+          ))}
         </div>
 
         <div style={panelStyle}>
@@ -1300,7 +1522,7 @@ export default function App() {
 
           {topPlayers.length === 0 && (
             <div style={{ padding: '10px 0', color: 'rgba(255,255,255,0.62)', fontSize: 13 }}>
-              No scores yet. Connect wallet and start hunting.
+              No local scores yet. Connect wallet and start hunting.
             </div>
           )}
 
@@ -1316,8 +1538,8 @@ export default function App() {
 
         <div className="game-footer">
           <span>Theme: Base Builder</span>
-          <span>Connect Base to play</span>
-          <span>Leaderboard by wallet</span>
+          <span>Onchain scores on Base</span>
+          <span>Contract ready</span>
         </div>
       </section>
     </main>
