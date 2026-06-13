@@ -8,14 +8,16 @@ function shortAddress(address) {
 
 export default function WalletBar({ big = false }) {
   const { address, isConnected, chain } = useAccount();
+
   const { connectors, connect, isPending } = useConnect();
+
   const { disconnect } = useDisconnect();
+
   const { switchChain, isPending: isSwitching } = useSwitchChain();
 
-  const baseConnector =
-    connectors.find((connector) =>
-      connector.name.toLowerCase().includes('base')
-    ) || connectors[0];
+  console.log('CONNECTORS:', connectors);
+
+  const baseConnector = connectors[0];
 
   const connectButtonStyle = {
     border: 0,
@@ -41,10 +43,8 @@ export default function WalletBar({ big = false }) {
     borderRadius: '999px',
     padding: '9px 12px',
     color: 'white',
-    background: 'rgba(255, 255, 255, 0.08)',
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    borderStyle: 'solid',
-    borderWidth: 1,
+    background: 'rgba(255,255,255,0.08)',
+    border: '1px solid rgba(255,255,255,0.1)',
     cursor: 'pointer',
     fontSize: 12,
     fontWeight: 800,
@@ -57,7 +57,7 @@ export default function WalletBar({ big = false }) {
     borderRadius: '999px',
     padding: '9px 12px',
     color: 'rgba(255,255,255,0.9)',
-    background: 'rgba(255, 255, 255, 0.08)',
+    background: 'rgba(255,255,255,0.08)',
     border: '1px solid rgba(255,255,255,0.1)',
     fontSize: 12,
     fontWeight: 800,
@@ -67,7 +67,13 @@ export default function WalletBar({ big = false }) {
     return (
       <button
         style={connectButtonStyle}
-        onClick={() => connect({ connector: baseConnector, chainId: base.id })}
+        onClick={() => {
+          console.log('Using connector:', baseConnector);
+
+          connect({
+            connector: baseConnector,
+          });
+        }}
         disabled={isPending}
       >
         {isPending ? 'Connecting...' : '🔵 Connect Base Wallet'}
@@ -77,7 +83,9 @@ export default function WalletBar({ big = false }) {
 
   return (
     <>
-      <span style={badgeStyle}>🔵 {shortAddress(address)}</span>
+      <span style={badgeStyle}>
+        🔵 {shortAddress(address)}
+      </span>
 
       {chain?.id !== base.id && (
         <button
@@ -89,7 +97,10 @@ export default function WalletBar({ big = false }) {
         </button>
       )}
 
-      <button style={softButtonStyle} onClick={() => disconnect()}>
+      <button
+        style={softButtonStyle}
+        onClick={() => disconnect()}
+      >
         Disconnect
       </button>
     </>
